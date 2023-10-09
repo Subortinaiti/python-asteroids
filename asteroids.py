@@ -10,6 +10,7 @@ bullet_clr = (255,0,0)
 laser_clr = (255,100,0)
 bar1_clr = (255,0,0)
 bar2_clr = (0,255,0)
+shootspeed_clr = (255,0,255)
 
 font1 = pg.font.SysFont("Calibri",40)
 font2 = pg.font.SysFont("Calibri",20)
@@ -18,6 +19,7 @@ displaysize = (800,600)
 clockspeed = 100
 endless_mode = True
 aimbot = False
+upgrade_chance = 0.3
 
 asteroid_thickness = 1
 asteroid_radius = 30
@@ -42,6 +44,11 @@ bullet_length = 12
 bullet_thickness = 4
 
 laser_reduction = 0.02
+
+upgrade_radius = 10
+shootspeed_duration = 800
+
+
 
 def calculate_velocities(speed, angle_radians):
 
@@ -175,15 +182,19 @@ class asteroid_class:
                 distance = distance_point_to_line((self.x,self.y), bullet.start, bullet.end)
             
             if distance <= self.radius:
-                if self.tier > 1:
-                    self.shatter_self()
-                    asteroids.remove(self)
-                else:
-                    asteroids.remove(self)
-                    if endless_mode and len(asteroids) < max_asteroids:
-                        asteroids.append(asteroid_class([0,random.randint(0,displaysize[1])],asteroid_radius,asteroid_points,asteroid_deviation,asteroid_tiers))
-                if type(bullet) == bullet_class:
-                    bullets.remove(bullet)
+                try:
+                    if self.tier > 1:
+                        self.shatter_self()
+                        asteroids.remove(self)
+                    else:
+                        asteroids.remove(self)
+                        spawn_upgrades((self.x,self.y))
+                        if endless_mode and len(asteroids) < max_asteroids:
+                            asteroids.append(asteroid_class([0,random.randint(0,displaysize[1])],asteroid_radius,asteroid_points,asteroid_deviation,asteroid_tiers))
+                    if type(bullet) == bullet_class:
+                        bullets.remove(bullet)
+                except:
+                    print("Non-fatal error during  collision detection.")
 
 
     def shatter_self(self):
@@ -278,7 +289,16 @@ class ship_class:
         if self.y > displaysize[1]+ship_scale:
             self.y = -ship_scale
 
+    def detect_upgrade_collision(self,upgrade):
+        distance = math.sqrt((self.x-upgrade.pos[0])**2+(self.y-upgrade.pos[1])**2)
+        if distance < upgrade.radius+ship_scale/2:
+            return True
+        return False
 
+
+
+
+        
 
     def attempt_shoot(self):
         global bullets
@@ -336,6 +356,39 @@ class laser_class:
 
 
         
+class shootspeed_upgrade_class:
+    def __init__(self,pos):
+        self.endtime = shootspeed_duration
+        self.livetime = 0
+        self.pickedup = False
+        self.pos = pos
+        self.radius = upgrade_radius
+        self.color = shootspeed_clr
+
+    def draw_self(self):
+        if not self.pickedup:
+            pg.draw.circle(display,self.color,self.pos,self.radius)
+
+    def activate_self(self):
+        global ship
+        self.pickedup = True
+        ship.cooldown[1]/=4
+
+
+            
+    def process_self(self):
+        global upgrades,ship
+        if self.livetime < self.endtime:
+            self.livetime += 1
+        else:
+            upgrades.pop(upgrades.index(self))
+            ship.cooldown[1]*=4
+            return
+        
+    
+
+
+
 
 
 def draw_overlay():
@@ -359,38 +412,72 @@ def draw_overlay():
 
 
 def process_aimbot():
-    global ship, asteroids
-    
-    # Initialize variables to keep track of the closest asteroid and its distance
-    closest_asteroid = None
+    global ship, asteroids, upgrades
+
+    # Initialize variables to keep track of the closest target and its distance
+    closest_target = None
     min_distance = float('inf')
-    
+
     # Calculate the ship's position
     ship_x, ship_y = ship.x, ship.y
-    
-    # Iterate through all asteroids to find the closest one
-    for asteroid in asteroids:
-        asteroid_x, asteroid_y = asteroid.x, asteroid.y
-        
-        # Calculate the distance between the ship and the current asteroid
-        distance = math.sqrt((asteroid_x - ship_x) ** 2 + (asteroid_y - ship_y) ** 2)
-        
-        # If this asteroid is closer than the previous closest, update the closest_asteroid and min_distance
-        if distance < min_distance:
-            min_distance = distance
-            closest_asteroid = asteroid
-    
-    # If there is a closest asteroid, calculate the angle towards it
-    if closest_asteroid:
-        target_angle = math.atan2(closest_asteroid.y - ship_y, closest_asteroid.x - ship_x)
-        
-        # Adjust the ship's angle to point towards the closest asteroid
-        return target_angle + math.pi/2
-    
-    # If no asteroid is found (unlikely), return the ship's current angle
-    return ship.angle
-     
 
+    # Check for upgrades
+    if upgrades:
+        # Iterate through upgrades to find the closest one
+        for upgrade in upgrades:
+            upgrade_x, upgrade_y = upgrade.pos
+
+            # Calculate the distance between the ship and the current upgrade
+            distance = math.sqrt((upgrade_x - ship_x) ** 2 + (upgrade_y - ship_y) ** 2)
+
+            # If this upgrade is closer than the previous closest, update the closest_target and min_distance
+            if distance < min_distance:
+                min_distance = distance
+                closest_target = upgrade
+
+    # If no upgrades are found or they are further away, consider asteroids
+    if not closest_target:
+        # Iterate through asteroids to find the closest one
+        for asteroid in asteroids:
+            asteroid_x, asteroid_y = asteroid.x, asteroid.y
+
+            # Calculate the distance between the ship and the current asteroid
+            distance = math.sqrt((asteroid_x - ship_x) ** 2 + (asteroid_y - ship_y) ** 2)
+
+            # If this asteroid is closer than the previous closest, update the closest_target and min_distance
+            if distance < min_distance:
+                min_distance = distance
+                closest_target = asteroid
+
+    # If there is a closest target (either an upgrade or asteroid), calculate the angle towards it
+    if closest_target:
+        if isinstance(closest_target, shootspeed_upgrade_class):
+            target_x, target_y = closest_target.pos
+            ship.accelleration = ship_accelleration
+        else:
+            target_x, target_y = closest_target.x, closest_target.y
+
+        target_angle = math.atan2(target_y - ship_y, target_x - ship_x)
+
+        # Adjust the ship's angle to point towards the closest target
+        return target_angle + math.pi / 2
+
+    # If no targets are found (unlikely), return the ship's current angle
+    return ship.angle
+
+
+def spawn_upgrades(pos):
+    global upgrades
+    if random.random() <= upgrade_chance:
+        upgrades.append(random.choice([
+            shootspeed_upgrade_class(pos)
+
+            ]))
+
+
+
+
+    
 
 def logic_calls():
     global keystate,ship,asteroids
@@ -405,6 +492,9 @@ def logic_calls():
         ship.angle -= ship_rot_speed
     if keystate[pg.K_RIGHT] or keystate[pg.K_d]:
         ship.angle += ship_rot_speed
+        
+    ship.accelleration = 0
+
 
     if aimbot:
 #        ship.angle = process_aimbot()
@@ -416,7 +506,7 @@ def logic_calls():
 
 
 
-    ship.accelleration = 0
+
     if keystate[pg.K_UP] or keystate[pg.K_w]:
         ship.accelleration = ship_accelleration
     if enable_reverse:
@@ -429,14 +519,21 @@ def logic_calls():
     for bullet in bullets:
         bullet.move_self()
 
+    for upgrade in upgrades:
+        if upgrade.pickedup:
+            upgrade.process_self()
+        else:
+            if ship.detect_upgrade_collision(upgrade):
+                upgrade.activate_self()
+
+
+
+
+            
+
     ship.move_self()
         
     clock.tick(clockspeed)
-
-
-
-
-
 
 
     
@@ -449,6 +546,8 @@ def graphic_calls():
 
     for bullet in bullets:
         bullet.draw_self()
+    for upgrade in upgrades:
+        upgrade.draw_self()
 
 
     ship.draw_self()
@@ -463,10 +562,11 @@ font = pg.font.SysFont("Calibri",round(displaysize[0]/40))
 
 
 def main():
-    global asteroids,dead,debug,ship,bullets,aimbot
+    global asteroids,dead,debug,ship,bullets,aimbot,upgrades
     debug = False
     asteroids = []
     bullets = []
+    upgrades = []
     ship = ship_class()
     for i in range(max_asteroids):
         asteroids.append(asteroid_class([0,random.randint(0,displaysize[1])],asteroid_radius,asteroid_points,asteroid_deviation,asteroid_tiers))
@@ -488,7 +588,7 @@ def main():
                 if event.key == pg.K_SPACE:
                     ship.attempt_shoot()
                 if event.key == pg.K_b:
-                    aimbot = not aimbot
+                    aimbot= not aimbot
 
                 if event.key == pg.K_1:
                     ship.sel_weapon = 0
